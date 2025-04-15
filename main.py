@@ -124,44 +124,67 @@ async def validate_startup_idea(idea: StartupIdea):
         return FALLBACK_RESPONSE
 
     prompt = f"""
-Generate a startup analysis in VALID JSON format. Follow this exact structure:
+    You are a highly experienced startup analyst trusted by top-tier VCs. Your role is to critically and realistically evaluate the following startup idea and return your findings as structured JSON.
+    
+    Startup Details:
+    Title: {idea.title}
+    Problem: {idea.problem}
+    Solution: {idea.solution}
+    Target Audience: {idea.audience}
+    Business Model: {idea.businessModel}
+    
+    Evaluation Guidelines:
+    1. First, assess if the input is incoherent, vague, or gibberish. If so, set `"isGibberish": true` and return generic, low-confidence responses. Otherwise, set `"isGibberish": false`.
+    2. Provide realistic, well-justified scores (0–100) for:
+       - overall potential
+       - market potential
+       - technical feasibility  
+       Avoid generic or inflated scoring. Use critical thinking.
+    3. Perform a thoughtful SWOT analysis (3–5 points each) tailored to the startup's domain. Avoid clichés or shallow insights.
+    4. Suggest 3 realistic MVP features or actions to validate the idea early.
+    5. Propose 2–3 feasible business model options that align with the problem and audience.
+    6. Conduct a market analysis including:
+       - clear definition of the target market
+       - realistic estimates for TAM/SAM/SOM (with dollar figures or user counts)
+       - growth rate and trends based on common knowledge or patterns
+       - likely competitors (real or credible fictional names)
+       - key customer needs
+       - barriers to entry (tech, regulation, cost, trust, etc.)
+    
+    Your output must be the best possible analysis based on the information given. Make assumptions if necessary, but keep them realistic.
+    
+     Output only **valid minified JSON**. No markdown, comments, explanations, or extra text.
+    
+    Required Output Format:
+    {{
+      "isGibberish": boolean,
+      "score": {{
+        "overall": number,
+        "marketPotential": number,
+        "technicalFeasibility": number
+      }},
+      "swotAnalysis": {{
+        "strengths": [string],
+        "weaknesses": [string],
+        "opportunities": [string],
+        "threats": [string]
+      }},
+      "mvpSuggestions": [string],
+      "businessModelIdeas": [string],
+      "marketAnalysis": {{
+        "targetMarket": string,
+        "tam": string,
+        "sam": string,
+        "som": string,
+        "growthRate": string,
+        "trends": [string],
+        "competitors": [string],
+        "customerNeeds": [string],
+        "barriersToEntry": [string]
+      }}
+    }}
+    """
 
-{{
-  "score": {{
-    "overall": 85.5,
-    "marketPotential": 90.0,
-    "technicalFeasibility": 75.0
-  }},
-  "swotAnalysis": {{
-    "strengths": ["Unique value proposition", "Experienced team"],
-    "weaknesses": ["High costs", "New market"],
-    "opportunities": ["Market needs", "Partnerships"],
-    "threats": ["Regulations", "Competitors"]
-  }},
-  "mvpSuggestions": ["Core feature", "Landing page", "Pilot program"],
-  "businessModelIdeas": ["Subscription", "Transaction fees"],
-  "marketAnalysis": {{
-    "targetMarket": "Small businesses",
-    "tam": "$50B",
-    "sam": "$10B",
-    "som": "$500M",
-    "growthRate": "12% CAGR",
-    "trends": ["Remote work", "AI"],
-    "competitors": ["Company A", "Platform B"],
-    "customerNeeds": ["Integration", "Pricing"],
-    "barriersToEntry": ["Network effects", "Compliance"]
-  }}
-}}
-
-Analyze this startup:
-Title: {idea.title}
-Problem: {idea.problem}
-Solution: {idea.solution}
-Audience: {idea.audience}
-Business Model: {idea.businessModel}
-
-Output ONLY valid JSON with no comments or formatting.
-"""
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
