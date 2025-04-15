@@ -1,28 +1,35 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from typing import List, Optional
 import httpx
 import json
 import os
-from typing import List
+import logging
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
-# Get frontend URL from environment variable, default to localhost:3000 if not set
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url],
+    allow_origins=os.getenv("FRONTEND_URL", "http://localhost:3000").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Pydantic Models
 class StartupIdea(BaseModel):
     title: str
     problem: str
@@ -62,101 +69,154 @@ class StartupEvaluation(BaseModel):
 FALLBACK_RESPONSE = {
     "score": {"overall": 75, "marketPotential": 70, "technicalFeasibility": 80},
     "swotAnalysis": {
-        "strengths": ["Innovative", "Scalable", "Well-targeted"],
-        "weaknesses": ["High dev cost", "Low adoption risk", "Unclear pricing"],
-        "opportunities": ["Growing market", "Tech trends", "Global reach"],
-        "threats": ["Regulations", "Competitors", "Economic instability"]
+        "strengths": ["Innovative solution", "Strong market need"],
+        "weaknesses": ["High competition", "Technical complexity"],
+        "opportunities": ["Market growth", "Emerging technologies"],
+        "threats": ["Regulatory changes", "Economic downturn"]
     },
-    "mvpSuggestions": ["Build landing page", "Create waitlist", "Offer demo"],
-    "businessModelIdeas": ["Subscription", "Freemium", "Tiered pricing"],
+    "mvpSuggestions": ["Build prototype", "Conduct user testing"],
+    "businessModelIdeas": ["Subscription model", "Freemium approach"],
     "marketAnalysis": {
-        "targetMarket": "Urban eco-conscious youth",
-        "tam": "$50000000000",
-        "sam": "$5000000000",
-        "som": "$100000000",
-        "growthRate": "15% CAGR due to rising demand for sustainable consumer products globally",
-        "trends": ["AI for sustainability", "Eco-lifestyle tracking"],
-        "competitors": ["Greenly", "Joro"],
-        "customerNeeds": ["Actionable tips", "Progress tracking"],
-        "barriersToEntry": ["Trust", "Accuracy", "Engagement"]
+        "targetMarket": "Global tech consumers",
+        "tam": "$50B",
+        "sam": "$10B",
+        "som": "$1B",
+        "growthRate": "10% CAGR",
+        "trends": ["Digital transformation", "Remote work"],
+        "competitors": ["Existing solutions", "Tech giants"],
+        "customerNeeds": ["Ease of use", "Cost-effectiveness"],
+        "barriersToEntry": ["Market saturation", "High capital needs"]
     }
 }
 
+def validate_and_clean_response(raw_response: str) -> Optional[dict]:
+    """Clean and validate the LLM response"""
+    try:
+        # Remove JSON markdown blocks
+        clean_json = raw_response.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(clean_json)
+        
+        # Basic validation
+        if "score" not in parsed or "swotAnalysis" not in parsed:
+            raise ValueError("Missing required fields in response")
+            
+        return parsed
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Response validation failed: {str(e)}")
+        logger.debug(f"Invalid response content: {raw_response}")
+        return None
+
 @app.post("/validate", response_model=StartupEvaluation)
 async def validate_startup_idea(idea: StartupIdea):
-    prompt = f"""
-You are a startup evaluator. Analyze the following startup idea and return valid JSON only. Do not repeat input.
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    if not GROQ_API_KEY:
+        logger.error("Groq API key not found in environment variables")
+        return FALLBACK_RESPONSE
 
-Startup:
+    prompt = f"""
+As a senior startup analyst, thoroughly evaluate this business idea. Provide detailed analysis in JSON format.
+
+Startup Details:
 Title: {idea.title}
 Problem: {idea.problem}
 Solution: {idea.solution}
-Audience: {idea.audience}
+Target Audience: {idea.audience}
 Business Model: {idea.businessModel}
 
-Output JSON format:
+Analysis Requirements:
+1. Score the idea (0-100) on overall potential, market potential, and technical feasibility
+2. SWOT analysis with 3-5 points per category
+3. 3 MVP suggestions
+4. 2-3 business model ideas
+5. Detailed market analysis including TAM/SAM/SOM
+
+Output must be valid JSON only. Structure:
 {{
-  "isGibberish": boolean,
   "score": {{
-    "overall": number [0-100],
-    "marketPotential": number [0-100],
-    "technicalFeasibility": number [0-100]
+    "overall": number,
+    "marketPotential": number,
+    "technicalFeasibility": number
   }},
   "swotAnalysis": {{
-    "strengths": [string, ...],
-    "weaknesses": [string, ...],
-    "opportunities": [string, ...],
-    "threats": [string, ...]
+    "strengths": [],
+    "weaknesses": [],
+    "opportunities": [],
+    "threats": []
   }},
-  "mvpSuggestions": [string, string, string],
-  "businessModelIdeas": [string, ...],
+  "mvpSuggestions": [],
+  "businessModelIdeas": [],
   "marketAnalysis": {{
     "targetMarket": string,
-    "tam": string (total addressable market in USD, numeric format only, e.g. "$1500000000", and mention the user types or groups included in TAM),
-    "sam": string (serviceable available market in USD, and mention who is actually reachable based on your scope),
-    "som": string (serviceable obtainable market in USD, and mention who is most likely to convert first),
-    "growthRate": string (state the CAGR or growth and the reason behind this growth based on market forces or user demand),
-    "trends": [string, ...],
-    "competitors": [string, ...],
-    "customerNeeds": [string, ...],
-    "barriersToEntry": [string, ...]
+    "tam": string,
+    "sam": string,
+    "som": string,
+    "growthRate": string,
+    "trends": [],
+    "competitors": [],
+    "customerNeeds": [],
+    "barriersToEntry": []
   }}
 }}
-- Return only valid JSON
-- Do not repeat or rephrase the input.
-- No markdown, no commentary.
 """
 
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    payload = {
+        "model": "mixtral-8x7b-32768",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "max_tokens": 2000,
+        "top_p": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0
+    }
+
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            check = await client.get("http://localhost:11434/api/tags")
-            if check.status_code != 200:
-                raise HTTPException(status_code=503, detail="Ollama not available")
-
-        text_response = ""
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream("POST", "http://localhost:11434/api/generate",
-                                     json={"model": "mistral", "prompt": prompt, "stream": True}) as response:
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        try:
-                            piece = json.loads(line)
-                            text_response += piece.get("response", "")
-                        except:
-                            continue
-
-        if text_response.strip().startswith("{") and text_response.strip().endswith("}"):
-            return json.loads(text_response)
-
-        json_start = text_response.find("{")
-        json_end = text_response.rfind("}") + 1
-        json_str = text_response[json_start:json_end]
-        result = json.loads(json_str)
-
-        if all(k in result for k in ["score", "swotAnalysis", "mvpSuggestions", "businessModelIdeas", "marketAnalysis"]):
-            return result
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            
+            # Check for HTTP errors
+            response.raise_for_status()
+            
+            response_data = response.json()
+            logger.debug(f"API Response: {json.dumps(response_data, indent=2)}")
+            
+            if not response_data.get("choices"):
+                logger.error("Empty choices array in response")
+                return FALLBACK_RESPONSE
+                
+            llm_response = response_data["choices"][0]["message"]["content"]
+            logger.info(f"Raw LLM response: {llm_response}")
+            
+            parsed_data = validate_and_clean_response(llm_response)
+            if not parsed_data:
+                logger.warning("Using fallback response due to invalid LLM output")
+                return FALLBACK_RESPONSE
+                
+            # Validate against Pydantic model
+            validated_response = StartupEvaluation(**parsed_data)
+            return validated_response
+            
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error {e.response.status_code}: {e.response.text}")
+        return FALLBACK_RESPONSE
+        
+    except ValidationError as e:
+        logger.error(f"Response validation failed: {str(e)}")
+        return FALLBACK_RESPONSE
+        
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         return FALLBACK_RESPONSE
 
-    except Exception as e:
-        print("Streaming or parsing error:", str(e))
-        raise HTTPException(status_code=500, detail="Error generating response")
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
