@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 from typing import List, Optional
@@ -66,97 +66,101 @@ class StartupEvaluation(BaseModel):
     businessModelIdeas: List[str]
     marketAnalysis: MarketAnalysis
 
-FALLBACK_RESPONSE = {
-    "score": {"overall": 75, "marketPotential": 70, "technicalFeasibility": 80},
-    "swotAnalysis": {
-        "strengths": ["Innovative solution", "Strong market need"],
-        "weaknesses": ["High competition", "Technical complexity"],
-        "opportunities": ["Market growth", "Emerging technologies"],
-        "threats": ["Regulatory changes", "Economic downturn"]
-    },
-    "mvpSuggestions": ["Build prototype", "Conduct user testing"],
-    "businessModelIdeas": ["Subscription model", "Freemium approach"],
-    "marketAnalysis": {
-        "targetMarket": "Global tech consumers",
-        "tam": "$50B",
-        "sam": "$10B",
-        "som": "$1B",
-        "growthRate": "10% CAGR",
-        "trends": ["Digital transformation", "Remote work"],
-        "competitors": ["Existing solutions", "Tech giants"],
-        "customerNeeds": ["Ease of use", "Cost-effectiveness"],
-        "barriersToEntry": ["Market saturation", "High capital needs"]
-    }
-}
+FALLBACK_RESPONSE = StartupEvaluation(
+    score=Score(overall=75, marketPotential=70, technicalFeasibility=80),
+    swotAnalysis=SwotAnalysis(
+        strengths=["Strong concept", "Clear target market"],
+        weaknesses=["High competition", "Complex implementation"],
+        opportunities=["Market growth", "Tech advancements"],
+        threats=["Regulatory changes", "Economic shifts"]
+    ),
+    mvpSuggestions=["Develop core feature", "Create landing page", "Conduct user testing"],
+    businessModelIdeas=["Subscription model", "Freemium approach"],
+    marketAnalysis=MarketAnalysis(
+        targetMarket="Global tech users",
+        tam="$50B",
+        sam="$10B",
+        som="$1B",
+        growthRate="12% CAGR",
+        trends=["Digital transformation", "AI adoption"],
+        competitors=["Existing solutions", "Tech giants"],
+        customerNeeds=["Ease of use", "Cost efficiency"],
+        barriersToEntry=["Market saturation", "High capital needs"]
+    )
+)
 
-def validate_and_clean_response(raw_response: str) -> Optional[dict]:
-    """Clean and validate the LLM response"""
+def repair_json(json_str: str) -> Optional[dict]:
+    """Attempt to fix common JSON formatting issues"""
     try:
-        # Remove JSON markdown blocks
-        clean_json = raw_response.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(clean_json)
+        # First pass cleanup
+        clean_str = json_str.strip()
         
-        # Basic validation
-        if "score" not in parsed or "swotAnalysis" not in parsed:
-            raise ValueError("Missing required fields in response")
+        # Remove JSON markdown blocks
+        if clean_str.startswith("```json"):
+            clean_str = clean_str[7:]
+        if clean_str.endswith("```"):
+            clean_str = clean_str[:-3].strip()
             
-        return parsed
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Response validation failed: {str(e)}")
-        logger.debug(f"Invalid response content: {raw_response}")
+        # Fix common escaping issues
+        clean_str = clean_str.replace("\\n", "") \
+                            .replace("\\'", "'") \
+                            .replace('\\"', '"') \
+                            .replace("True", "true") \
+                            .replace("False", "false")
+                            
+        # Handle trailing commas
+        clean_str = clean_str.replace(",}", "}").replace(",]", "]")
+        
+        return json.loads(clean_str)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON repair failed: {str(e)}")
         return None
 
 @app.post("/validate", response_model=StartupEvaluation)
 async def validate_startup_idea(idea: StartupIdea):
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     if not GROQ_API_KEY:
-        logger.error("Groq API key not found in environment variables")
+        logger.error("Missing GROQ_API_KEY environment variable")
         return FALLBACK_RESPONSE
 
     prompt = f"""
-As a senior startup analyst, thoroughly evaluate this business idea. Provide detailed analysis in JSON format.
+Generate a startup analysis in VALID JSON format. Follow this exact structure:
 
-Startup Details:
+{{
+  "score": {{
+    "overall": 85.5,
+    "marketPotential": 90.0,
+    "technicalFeasibility": 75.0
+  }},
+  "swotAnalysis": {{
+    "strengths": ["Unique value proposition", "Experienced team"],
+    "weaknesses": ["High costs", "New market"],
+    "opportunities": ["Market needs", "Partnerships"],
+    "threats": ["Regulations", "Competitors"]
+  }},
+  "mvpSuggestions": ["Core feature", "Landing page", "Pilot program"],
+  "businessModelIdeas": ["Subscription", "Transaction fees"],
+  "marketAnalysis": {{
+    "targetMarket": "Small businesses",
+    "tam": "$50B",
+    "sam": "$10B",
+    "som": "$500M",
+    "growthRate": "12% CAGR",
+    "trends": ["Remote work", "AI"],
+    "competitors": ["Company A", "Platform B"],
+    "customerNeeds": ["Integration", "Pricing"],
+    "barriersToEntry": ["Network effects", "Compliance"]
+  }}
+}}
+
+Analyze this startup:
 Title: {idea.title}
 Problem: {idea.problem}
 Solution: {idea.solution}
-Target Audience: {idea.audience}
+Audience: {idea.audience}
 Business Model: {idea.businessModel}
 
-Analysis Requirements:
-1. Score the idea (0-100) on overall potential, market potential, and technical feasibility
-2. SWOT analysis with 3-5 points per category
-3. 3 MVP suggestions
-4. 2-3 business model ideas
-5. Detailed market analysis including TAM/SAM/SOM
-
-Output must be valid JSON only. Structure:
-{{
-  "score": {{
-    "overall": number,
-    "marketPotential": number,
-    "technicalFeasibility": number
-  }},
-  "swotAnalysis": {{
-    "strengths": [],
-    "weaknesses": [],
-    "opportunities": [],
-    "threats": []
-  }},
-  "mvpSuggestions": [],
-  "businessModelIdeas": [],
-  "marketAnalysis": {{
-    "targetMarket": string,
-    "tam": string,
-    "sam": string,
-    "som": string,
-    "growthRate": string,
-    "trends": [],
-    "competitors": [],
-    "customerNeeds": [],
-    "barriersToEntry": []
-  }}
-}}
+Output ONLY valid JSON with no comments or formatting.
 """
 
     headers = {
@@ -166,51 +170,59 @@ Output must be valid JSON only. Structure:
     }
 
     payload = {
-        "model": "mixtral-8x7b-32768",
+        "model": "llama3-70b-8192",
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
-        "max_tokens": 2000,
-        "top_p": 1.0,
-        "frequency_penalty": 0.0,
-        "presence_penalty": 0.0
+        "temperature": 0.3,
+        "max_tokens": 2500,
+        "response_format": {"type": "json_object"},
+        "top_p": 0.9,
+        "frequency_penalty": 0.5
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=40.0) as client:
+            # Test API connection
+            models_response = await client.get(
+                "https://api.groq.com/openai/v1/models",
+                headers=headers
+            )
+            if models_response.status_code != 200:
+                logger.error(f"API connection failed: {models_response.text}")
+                return FALLBACK_RESPONSE
+
+            # Main request
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers=headers,
                 json=payload
             )
-            
-            # Check for HTTP errors
             response.raise_for_status()
             
             response_data = response.json()
-            logger.debug(f"API Response: {json.dumps(response_data, indent=2)}")
-            
             if not response_data.get("choices"):
                 logger.error("Empty choices array in response")
                 return FALLBACK_RESPONSE
                 
-            llm_response = response_data["choices"][0]["message"]["content"]
-            logger.info(f"Raw LLM response: {llm_response}")
+            llm_content = response_data["choices"][0]["message"]["content"]
+            logger.debug(f"Raw LLM output:\n{llm_content}")
             
-            parsed_data = validate_and_clean_response(llm_response)
+            # Attempt JSON repair
+            parsed_data = repair_json(llm_content)
             if not parsed_data:
-                logger.warning("Using fallback response due to invalid LLM output")
+                logger.error("JSON repair failed. Original response:")
+                logger.error(llm_content)
                 return FALLBACK_RESPONSE
                 
-            # Validate against Pydantic model
-            validated_response = StartupEvaluation(**parsed_data)
-            return validated_response
-            
+            try:
+                validated = StartupEvaluation(**parsed_data)
+                return validated
+            except ValidationError as e:
+                logger.error(f"Validation failed: {e.errors()}")
+                logger.error(f"Invalid data: {parsed_data}")
+                return FALLBACK_RESPONSE
+
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error {e.response.status_code}: {e.response.text}")
-        return FALLBACK_RESPONSE
-        
-    except ValidationError as e:
-        logger.error(f"Response validation failed: {str(e)}")
         return FALLBACK_RESPONSE
         
     except Exception as e:
